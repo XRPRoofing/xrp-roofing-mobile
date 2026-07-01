@@ -1,7 +1,7 @@
 apply plugin: "com.android.application"
 apply plugin: "org.jetbrains.kotlin.android"
 apply plugin: "com.facebook.react"
-apply plugin: "com.google.gms.google-services"
+// apply plugin: "com.google.gms.google-services" // disabled until Twilio crash resolved
 
 /**
  * This is the configuration block to customize your React Native Android app.
@@ -116,12 +116,10 @@ dependencies {
         implementation jscFlavor
     }
 
-    // Firebase Cloud Messaging (required by Twilio Voice SDK)
-    implementation(platform("com.google.firebase:firebase-bom:33.1.0"))
-    implementation("com.google.firebase:firebase-messaging")
-
-    // Twilio Voice SDK (manually added since auto-linking is disabled for error handling)
-    implementation project(':twilio_voice-react-native-sdk')
+    // Firebase + Twilio Voice SDK removed from native build - causes startup crash
+    // Will be re-added once compatibility issue is resolved
+    // implementation(platform("com.google.firebase:firebase-bom:33.1.0"))
+    // implementation("com.google.firebase:firebase-messaging")
 }
 
 apply from: file("../../node_modules/@react-native-community/cli-platform-android/native_modules.gradle"); applyNativeModulesAppBuildGradle(project)

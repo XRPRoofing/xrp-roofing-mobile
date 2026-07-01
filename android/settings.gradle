@@ -3,6 +3,5 @@ apply from: file("../node_modules/@react-native-community/cli-platform-android/n
 include ':app'
 includeBuild('../node_modules/@react-native/gradle-plugin')
 
-// Manually include Twilio Voice SDK (auto-linking disabled for controlled initialization)
-include ':twilio_voice-react-native-sdk'
-project(':twilio_voice-react-native-sdk').projectDir = new File(rootProject.projectDir, '../node_modules/@twilio/voice-react-native-sdk/android')
+// Twilio Voice SDK removed from native build due to crash on startup
+// Will be re-added once compatibility issue is resolved
