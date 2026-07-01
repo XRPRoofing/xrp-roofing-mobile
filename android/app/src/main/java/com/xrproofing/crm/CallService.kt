@@ -40,7 +40,7 @@ class CallService : Service() {
 
     companion object {
         const val CHANNEL_ID = "xrp_call_service_v2"
-        const val RING_CHANNEL_ID = "xrp_incoming_call_v2"
+        const val RING_CHANNEL_ID = "xrp_incoming_call_v3"
         const val NOTIFICATION_ID = 1001
         const val RING_NOTIFICATION_ID = 1002
         const val SUPABASE_URL = "https://lcchocuoeettbryfwlwq.supabase.co"
@@ -126,7 +126,8 @@ class CallService : Service() {
                     android.util.Log.e(TAG, "Poll error: ${e.message}")
                     mainHandler.post { updateServiceNotification("Poll error: ${e.message?.take(30)}") }
                 }
-                try { Thread.sleep(3000) } catch (_: InterruptedException) { break }
+                // Poll every 1.5 seconds for faster detection
+                try { Thread.sleep(1500) } catch (_: InterruptedException) { break }
             }
         }.apply {
             isDaemon = true
@@ -138,12 +139,13 @@ class CallService : Service() {
     private fun checkForIncomingCalls() {
         val sdf = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", Locale.US)
         sdf.timeZone = TimeZone.getTimeZone("UTC")
-        val thirtySecondsAgo = sdf.format(Date(System.currentTimeMillis() - 30000))
+        val sixtySecondsAgo = sdf.format(Date(System.currentTimeMillis() - 60000))
 
+        // Poll for ivr-routed events — these fire when customer selects agent in IVR
         val urlStr = "$SUPABASE_URL/rest/v1/conversation_events" +
             "?select=id,status,created_at" +
-            "&status=eq.ringing" +
-            "&created_at=gte.$thirtySecondsAgo" +
+            "&status=eq.ivr-routed" +
+            "&created_at=gte.$sixtySecondsAgo" +
             "&order=created_at.desc" +
             "&limit=1"
 
@@ -191,28 +193,44 @@ class CallService : Service() {
         android.util.Log.i(TAG, "=== TRIGGERING RING ===")
         isRinging = true
 
-        // 1. Vibrate aggressively
-        try { startVibration() } catch (e: Throwable) {
-            android.util.Log.e(TAG, "Vibrate: ${e.message}")
-        }
-
-        // 2. Play ringtone at max volume via MediaPlayer
-        try { startRingtone() } catch (e: Throwable) {
-            android.util.Log.e(TAG, "Ringtone: ${e.message}")
-        }
-
-        // 3. Show full-screen notification with sound
-        try { showIncomingCallNotification() } catch (e: Throwable) {
-            android.util.Log.e(TAG, "Notification: ${e.message}")
-        }
-
-        // 4. Wake screen
+        // 1. Wake screen first
         try { wakeScreen() } catch (e: Throwable) {
             android.util.Log.e(TAG, "Wake: ${e.message}")
         }
 
+        // 2. Vibrate
+        try { startVibration() } catch (e: Throwable) {
+            android.util.Log.e(TAG, "Vibrate: ${e.message}")
+        }
+
+        // 3. Play ringtone
+        try { startRingtone() } catch (e: Throwable) {
+            android.util.Log.e(TAG, "Ringtone: ${e.message}")
+        }
+
+        // 4. Show notification with full-screen intent
+        try { showIncomingCallNotification() } catch (e: Throwable) {
+            android.util.Log.e(TAG, "Notification: ${e.message}")
+        }
+
+        // 5. Launch Activity over lock screen so user can answer
+        try { launchActivityOverLockScreen() } catch (e: Throwable) {
+            android.util.Log.e(TAG, "Launch activity: ${e.message}")
+        }
+
         // Auto-stop after 30 seconds
         mainHandler.postDelayed({ stopRinging() }, 30000)
+    }
+
+    private fun launchActivityOverLockScreen() {
+        val intent = Intent(this, MainActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or
+                Intent.FLAG_ACTIVITY_CLEAR_TOP or
+                Intent.FLAG_ACTIVITY_REORDER_TO_FRONT
+            putExtra("incoming_call", true)
+        }
+        startActivity(intent)
+        android.util.Log.i(TAG, "Activity launched over lock screen")
     }
 
     private fun startVibration() {
@@ -234,7 +252,6 @@ class CallService : Service() {
     }
 
     private fun startRingtone() {
-        // Set ringer volume to max
         try {
             val am = getSystemService(Context.AUDIO_SERVICE) as AudioManager
             val maxVol = am.getStreamMaxVolume(AudioManager.STREAM_RING)
@@ -261,7 +278,6 @@ class CallService : Service() {
 
     private fun stopRinging() {
         isRinging = false
-        // Stop vibration
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                 (getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as VibratorManager).defaultVibrator.cancel()
@@ -270,13 +286,11 @@ class CallService : Service() {
                 (getSystemService(Context.VIBRATOR_SERVICE) as Vibrator).cancel()
             }
         } catch (_: Throwable) {}
-        // Stop ringtone
         try {
             mediaPlayer?.stop()
             mediaPlayer?.release()
             mediaPlayer = null
         } catch (_: Throwable) {}
-        // Remove notification
         try {
             (getSystemService(NotificationManager::class.java)).cancel(RING_NOTIFICATION_ID)
         } catch (_: Throwable) {}
@@ -290,12 +304,13 @@ class CallService : Service() {
             PowerManager.SCREEN_BRIGHT_WAKE_LOCK or PowerManager.ACQUIRE_CAUSES_WAKEUP,
             "XRPRoofing::ScreenWake"
         )
-        wl.acquire(10_000)
+        wl.acquire(30_000) // Keep screen on for 30 seconds
     }
 
     private fun showIncomingCallNotification() {
         val intent = Intent(this, MainActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+            putExtra("incoming_call", true)
         }
         val pi = PendingIntent.getActivity(this, 1, intent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
@@ -303,7 +318,7 @@ class CallService : Service() {
         val ringtoneUri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_RINGTONE)
 
         val notification = NotificationCompat.Builder(this, RING_CHANNEL_ID)
-            .setContentTitle("📞 Incoming Call")
+            .setContentTitle("Incoming Call")
             .setContentText("XRP Roofing — Tap to answer")
             .setSmallIcon(android.R.drawable.ic_menu_call)
             .setPriority(NotificationCompat.PRIORITY_MAX)
@@ -332,10 +347,11 @@ class CallService : Service() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val nm = getSystemService(NotificationManager::class.java)
 
-            // Delete old channels from previous installs
+            // Delete old channels
             try {
                 nm.deleteNotificationChannel("xrp_call_service")
                 nm.deleteNotificationChannel("xrp_incoming_call")
+                nm.deleteNotificationChannel("xrp_incoming_call_v2")
             } catch (_: Throwable) {}
 
             nm.createNotificationChannel(NotificationChannel(
