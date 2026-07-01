@@ -122,11 +122,10 @@ class CallService : Service() {
                 try {
                     checkForIncomingCalls()
                     pollCount++
-                    if (pollCount % 10 == 0) {
-                        mainHandler.post { updateServiceNotification("Monitoring... (${pollCount} checks)") }
-                    }
+                    mainHandler.post { updateServiceNotification("Listening for calls (${pollCount})") }
                 } catch (e: Throwable) {
                     android.util.Log.e(TAG, "Poll error: ${e.message}")
+                    mainHandler.post { updateServiceNotification("Error: ${e.message?.take(40)}") }
                 }
                 try { Thread.sleep(3000) } catch (_: InterruptedException) { break }
             }
