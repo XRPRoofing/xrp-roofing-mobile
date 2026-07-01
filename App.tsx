@@ -117,7 +117,12 @@ export default function App() {
     setVoiceStatus('Fetching token...');
     try {
       const tokenRes = await fetch(`${CRM_URL}/api/voice/token`, {
-        headers: { Authorization: `Bearer ${session.access_token}` },
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${session.access_token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ platform: 'android' }),
       });
       if (!tokenRes.ok) {
         setVoiceStatus(`Token error: ${tokenRes.status}`);
