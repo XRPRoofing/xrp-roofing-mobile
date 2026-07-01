@@ -13,8 +13,11 @@ import {
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { WebView } from 'react-native-webview';
+import { NativeModules } from 'react-native';
 import { CRM_URL, SUPABASE_URL, SUPABASE_ANON_KEY } from './src/config/constants';
 import { voiceHtml } from './src/voiceHtml';
+
+const { CallServiceModule } = NativeModules;
 
 type Screen = 'loading' | 'login' | 'home' | 'incoming' | 'active';
 
@@ -103,6 +106,7 @@ export default function App() {
 
   async function handleLogout() {
     sendToWebView({ command: 'hangup' });
+    try { CallServiceModule?.stopService(); } catch (e) {}
     await AsyncStorage.removeItem('supabase_session');
     setSession(null);
     setVoiceStatus('Initializing...');
@@ -146,6 +150,10 @@ export default function App() {
           if (msg.data.state === 'loaded' && session?.access_token) {
             // Auto-register when WebView is ready
             setTimeout(() => registerVoice(), 500);
+          }
+          if (msg.data.state === 'ready') {
+            // Start foreground service to keep connection alive when locked
+            try { CallServiceModule?.startService(); } catch (e) {}
           }
           break;
         case 'incoming':
