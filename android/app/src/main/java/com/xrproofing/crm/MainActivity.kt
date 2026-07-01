@@ -1,4 +1,4 @@
-package com.xrproofingmobile
+package com.xrproofing.crm
 
 import com.facebook.react.ReactActivity
 import com.facebook.react.ReactActivityDelegate

@@ -1,4 +1,4 @@
-package com.xrproofingmobile
+package com.xrproofing.crm
 
 import android.app.Application
 import com.facebook.react.PackageList
