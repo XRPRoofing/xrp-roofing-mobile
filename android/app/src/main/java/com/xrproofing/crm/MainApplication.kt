@@ -1,6 +1,7 @@
 package com.xrproofing.crm
 
 import android.app.Application
+import android.util.Log
 import com.facebook.react.PackageList
 import com.facebook.react.ReactApplication
 import com.facebook.react.ReactHost
@@ -32,6 +33,11 @@ class MainApplication : Application(), ReactApplication {
 
   override fun onCreate() {
     super.onCreate()
+    // Install crash handler to capture error messages
+    Thread.setDefaultUncaughtExceptionHandler(CrashHandler(this))
+    Log.i("XRPRoofing", "CrashHandler installed")
+
     SoLoader.init(this, false)
+    Log.i("XRPRoofing", "SoLoader initialized")
   }
 }

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   View,
   Text,
@@ -8,11 +8,14 @@ import {
   ActivityIndicator,
   Alert,
   StatusBar,
+  Vibration,
+  Platform,
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { WebView } from 'react-native-webview';
 import { CRM_URL, SUPABASE_URL, SUPABASE_ANON_KEY } from './src/config/constants';
 
-type Screen = 'loading' | 'login' | 'home';
+type Screen = 'loading' | 'login' | 'home' | 'incoming' | 'active';
 
 export default function App() {
   const [screen, setScreen] = useState<Screen>('loading');
@@ -20,11 +23,33 @@ export default function App() {
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [session, setSession] = useState<any>(null);
-  const [voiceStatus, setVoiceStatus] = useState('SDK not loaded');
+  const [voiceStatus, setVoiceStatus] = useState('Initializing...');
+  const [callerInfo, setCallerInfo] = useState('Unknown');
+  const [callDuration, setCallDuration] = useState(0);
+  const [isMuted, setIsMuted] = useState(false);
+  const webViewRef = useRef<WebView>(null);
+  const timerRef = useRef<any>(null);
 
   useEffect(() => {
     checkExistingSession();
   }, []);
+
+  useEffect(() => {
+    if (screen === 'active') {
+      timerRef.current = setInterval(() => {
+        setCallDuration(d => d + 1);
+      }, 1000);
+    } else {
+      if (timerRef.current) {
+        clearInterval(timerRef.current);
+        timerRef.current = null;
+      }
+      setCallDuration(0);
+    }
+    return () => {
+      if (timerRef.current) clearInterval(timerRef.current);
+    };
+  }, [screen]);
 
   async function checkExistingSession() {
     try {
@@ -76,29 +101,110 @@ export default function App() {
   }
 
   async function handleLogout() {
+    sendToWebView({ command: 'hangup' });
     await AsyncStorage.removeItem('supabase_session');
     setSession(null);
+    setVoiceStatus('Initializing...');
     setScreen('login');
+  }
+
+  function sendToWebView(msg: object) {
+    webViewRef.current?.postMessage(JSON.stringify(msg));
   }
 
   async function registerVoice() {
     if (!session?.access_token) return;
-    setVoiceStatus('Registering...');
+    setVoiceStatus('Fetching token...');
     try {
       const tokenRes = await fetch(`${CRM_URL}/api/voice/token`, {
         headers: { Authorization: `Bearer ${session.access_token}` },
       });
       if (!tokenRes.ok) {
-        const err = await tokenRes.text();
         setVoiceStatus(`Token error: ${tokenRes.status}`);
         return;
       }
       const { token } = await tokenRes.json();
-      setVoiceStatus('Token received - SDK not yet available');
+      setVoiceStatus('Registering with Twilio...');
+      sendToWebView({ command: 'setup', token });
     } catch (error: any) {
       setVoiceStatus(`Error: ${error.message}`);
     }
   }
+
+  function handleWebViewMessage(event: any) {
+    try {
+      const msg = JSON.parse(event.nativeEvent.data);
+      switch (msg.type) {
+        case 'status':
+          setVoiceStatus(msg.data.message);
+          if (msg.data.state === 'loaded' && session?.access_token) {
+            // Auto-register when WebView is ready
+            setTimeout(() => registerVoice(), 500);
+          }
+          break;
+        case 'incoming':
+          setCallerInfo(msg.data.from);
+          setScreen('incoming');
+          Vibration.vibrate([0, 500, 200, 500, 200, 500, 200, 500], true);
+          break;
+        case 'callState':
+          if (msg.data.state === 'connected') {
+            Vibration.cancel();
+            setScreen('active');
+          } else if (msg.data.state === 'disconnected' || msg.data.state === 'cancelled') {
+            Vibration.cancel();
+            setIsMuted(false);
+            setScreen('home');
+          }
+          break;
+      }
+    } catch (e) {
+      // ignore
+    }
+  }
+
+  function handleAccept() {
+    Vibration.cancel();
+    sendToWebView({ command: 'accept' });
+  }
+
+  function handleReject() {
+    Vibration.cancel();
+    sendToWebView({ command: 'reject' });
+    setScreen('home');
+  }
+
+  function handleHangup() {
+    sendToWebView({ command: 'hangup' });
+    setIsMuted(false);
+    setScreen('home');
+  }
+
+  function handleToggleMute() {
+    const newMuted = !isMuted;
+    setIsMuted(newMuted);
+    sendToWebView({ command: 'mute', muted: newMuted });
+  }
+
+  function formatDuration(seconds: number): string {
+    const m = Math.floor(seconds / 60);
+    const s = seconds % 60;
+    return `${m}:${s.toString().padStart(2, '0')}`;
+  }
+
+  // Hidden WebView for Twilio Voice JS SDK
+  const voiceWebView = session ? (
+    <WebView
+      ref={webViewRef}
+      source={{ uri: 'file:///android_asset/voice.html' }}
+      onMessage={handleWebViewMessage}
+      javaScriptEnabled={true}
+      domStorageEnabled={true}
+      mediaPlaybackRequiresUserAction={false}
+      allowsInlineMediaPlayback={true}
+      style={{ width: 0, height: 0, position: 'absolute', opacity: 0 }}
+    />
+  ) : null;
 
   if (screen === 'loading') {
     return (
@@ -148,10 +254,52 @@ export default function App() {
     );
   }
 
+  if (screen === 'incoming') {
+    return (
+      <View style={styles.incomingContainer}>
+        <StatusBar barStyle="light-content" backgroundColor="#1a1a2e" />
+        {voiceWebView}
+        <Text style={styles.incomingLabel}>Incoming Call</Text>
+        <Text style={styles.callerName}>{callerInfo}</Text>
+        <View style={styles.callActions}>
+          <TouchableOpacity style={styles.rejectButton} onPress={handleReject}>
+            <Text style={styles.callButtonText}>Decline</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.acceptButton} onPress={handleAccept}>
+            <Text style={styles.callButtonText}>Answer</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+    );
+  }
+
+  if (screen === 'active') {
+    return (
+      <View style={styles.activeContainer}>
+        <StatusBar barStyle="light-content" backgroundColor="#1a1a2e" />
+        {voiceWebView}
+        <Text style={styles.activeLabel}>On Call</Text>
+        <Text style={styles.callerName}>{callerInfo}</Text>
+        <Text style={styles.duration}>{formatDuration(callDuration)}</Text>
+        <View style={styles.callActions}>
+          <TouchableOpacity
+            style={[styles.muteButton, isMuted && styles.muteActive]}
+            onPress={handleToggleMute}>
+            <Text style={styles.callButtonText}>{isMuted ? 'Unmute' : 'Mute'}</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.hangupButton} onPress={handleHangup}>
+            <Text style={styles.callButtonText}>End Call</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+    );
+  }
+
   // Home screen
   return (
     <View style={styles.container}>
       <StatusBar barStyle="light-content" backgroundColor="#1a1a2e" />
+      {voiceWebView}
       <Text style={styles.title}>XRP Roofing</Text>
       <Text style={styles.subtitle}>Mobile Voice Client</Text>
 
@@ -162,7 +310,11 @@ export default function App() {
 
       <View style={styles.statusCard}>
         <Text style={styles.statusLabel}>Voice Status:</Text>
-        <Text style={styles.statusValue}>{voiceStatus}</Text>
+        <Text style={[
+          styles.statusValue,
+          voiceStatus.includes('Ready') && styles.statusReady,
+          voiceStatus.includes('Error') && styles.statusError,
+        ]}>{voiceStatus}</Text>
       </View>
 
       <TouchableOpacity style={styles.button} onPress={registerVoice}>
@@ -244,5 +396,95 @@ const styles = StyleSheet.create({
     color: '#4fc3f7',
     fontSize: 16,
     fontWeight: '500',
+  },
+  statusReady: {
+    color: '#4caf50',
+  },
+  statusError: {
+    color: '#e74c3c',
+  },
+  // Incoming call screen
+  incomingContainer: {
+    flex: 1,
+    backgroundColor: '#1a1a2e',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 24,
+  },
+  incomingLabel: {
+    fontSize: 18,
+    color: '#aaa',
+    marginBottom: 16,
+  },
+  callerName: {
+    fontSize: 28,
+    fontWeight: 'bold',
+    color: '#fff',
+    marginBottom: 48,
+    textAlign: 'center',
+  },
+  callActions: {
+    flexDirection: 'row',
+    justifyContent: 'space-around',
+    width: '100%',
+  },
+  acceptButton: {
+    backgroundColor: '#4caf50',
+    borderRadius: 40,
+    paddingVertical: 18,
+    paddingHorizontal: 32,
+    minWidth: 120,
+    alignItems: 'center',
+  },
+  rejectButton: {
+    backgroundColor: '#e74c3c',
+    borderRadius: 40,
+    paddingVertical: 18,
+    paddingHorizontal: 32,
+    minWidth: 120,
+    alignItems: 'center',
+  },
+  callButtonText: {
+    color: '#fff',
+    fontSize: 18,
+    fontWeight: '600',
+  },
+  // Active call screen
+  activeContainer: {
+    flex: 1,
+    backgroundColor: '#1a1a2e',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 24,
+  },
+  activeLabel: {
+    fontSize: 18,
+    color: '#4caf50',
+    marginBottom: 16,
+  },
+  duration: {
+    fontSize: 36,
+    color: '#fff',
+    fontFamily: Platform.OS === 'android' ? 'monospace' : 'Courier',
+    marginBottom: 48,
+  },
+  muteButton: {
+    backgroundColor: '#555',
+    borderRadius: 40,
+    paddingVertical: 18,
+    paddingHorizontal: 32,
+    minWidth: 120,
+    alignItems: 'center',
+  },
+  muteActive: {
+    backgroundColor: '#ff9800',
+  },
+  hangupButton: {
+    backgroundColor: '#e74c3c',
+    borderRadius: 40,
+    paddingVertical: 18,
+    paddingHorizontal: 32,
+    minWidth: 120,
+    alignItems: 'center',
   },
 });
