@@ -9,9 +9,13 @@ import android.content.Context
 import android.content.Intent
 import android.os.Build
 import android.os.IBinder
+import android.os.PowerManager
+import android.net.wifi.WifiManager
 import androidx.core.app.NotificationCompat
 
 class CallService : Service() {
+    private var wakeLock: PowerManager.WakeLock? = null
+    private var wifiLock: WifiManager.WifiLock? = null
 
     companion object {
         const val CHANNEL_ID = "xrp_call_service"
@@ -52,6 +56,26 @@ class CallService : Service() {
         try {
             val notification = buildNotification()
             startForeground(NOTIFICATION_ID, notification)
+
+            // Keep CPU awake so WebView JS keeps running
+            val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
+            wakeLock = pm.newWakeLock(
+                PowerManager.PARTIAL_WAKE_LOCK,
+                "XRPRoofing::CallServiceLock"
+            ).apply {
+                acquire()
+            }
+
+            // Keep WiFi connection active
+            try {
+                val wm = applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
+                @Suppress("DEPRECATION")
+                wifiLock = wm.createWifiLock(WifiManager.WIFI_MODE_FULL_HIGH_PERF, "XRPRoofing::WifiLock").apply {
+                    acquire()
+                }
+            } catch (e: Exception) {
+                android.util.Log.w("CallService", "WiFi lock failed: ${e.message}")
+            }
         } catch (e: Exception) {
             android.util.Log.e("CallService", "startForeground failed: ${e.message}")
             stopSelf()
@@ -60,6 +84,14 @@ class CallService : Service() {
     }
 
     override fun onDestroy() {
+        try {
+            wifiLock?.let { if (it.isHeld) it.release() }
+            wifiLock = null
+            wakeLock?.let { if (it.isHeld) it.release() }
+            wakeLock = null
+        } catch (e: Exception) {
+            android.util.Log.e("CallService", "onDestroy error: ${e.message}")
+        }
         super.onDestroy()
     }
 
