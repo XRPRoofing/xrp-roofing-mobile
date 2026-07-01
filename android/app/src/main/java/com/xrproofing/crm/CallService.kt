@@ -126,8 +126,7 @@ class CallService : Service() {
                     android.util.Log.e(TAG, "Poll error: ${e.message}")
                     mainHandler.post { updateServiceNotification("Poll error: ${e.message?.take(30)}") }
                 }
-                // Poll every 1.5 seconds for faster detection
-                try { Thread.sleep(1500) } catch (_: InterruptedException) { break }
+                try { Thread.sleep(3000) } catch (_: InterruptedException) { break }
             }
         }.apply {
             isDaemon = true
@@ -139,13 +138,13 @@ class CallService : Service() {
     private fun checkForIncomingCalls() {
         val sdf = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", Locale.US)
         sdf.timeZone = TimeZone.getTimeZone("UTC")
-        val sixtySecondsAgo = sdf.format(Date(System.currentTimeMillis() - 60000))
+        val thirtySecondsAgo = sdf.format(Date(System.currentTimeMillis() - 30000))
 
-        // Poll for both ringing AND ivr-routed events
+        // Poll for ringing events (same as beta.25 which worked)
         val urlStr = "$SUPABASE_URL/rest/v1/conversation_events" +
             "?select=id,status,created_at" +
-            "&status=in.(ringing,ivr-routed)" +
-            "&created_at=gte.$sixtySecondsAgo" +
+            "&status=eq.ringing" +
+            "&created_at=gte.$thirtySecondsAgo" +
             "&order=created_at.desc" +
             "&limit=1"
 
@@ -171,10 +170,13 @@ class CallService : Service() {
                         lastSeenEventId = eventId
                         if (!isRinging) {
                             mainHandler.post {
-                                updateServiceNotification("RINGING! Call detected")
+                                updateServiceNotification("RINGING! $eventId")
                                 triggerIncomingCall()
                             }
                         }
+                    } else {
+                        // Same event still active — show in notification for debugging
+                        mainHandler.post { updateServiceNotification("Listening ($pollCount) last: ${eventId.takeLast(12)}") }
                     }
                 } else {
                     if (isRinging) {
@@ -183,6 +185,7 @@ class CallService : Service() {
                 }
             } else {
                 android.util.Log.w(TAG, "API: $responseCode")
+                mainHandler.post { updateServiceNotification("Listening ($pollCount) API:$responseCode") }
             }
         } finally {
             conn.disconnect()
@@ -213,24 +216,8 @@ class CallService : Service() {
             android.util.Log.e(TAG, "Notification: ${e.message}")
         }
 
-        // 5. Launch Activity over lock screen so user can answer
-        try { launchActivityOverLockScreen() } catch (e: Throwable) {
-            android.util.Log.e(TAG, "Launch activity: ${e.message}")
-        }
-
         // Auto-stop after 30 seconds
         mainHandler.postDelayed({ stopRinging() }, 30000)
-    }
-
-    private fun launchActivityOverLockScreen() {
-        val intent = Intent(this, MainActivity::class.java).apply {
-            flags = Intent.FLAG_ACTIVITY_NEW_TASK or
-                Intent.FLAG_ACTIVITY_CLEAR_TOP or
-                Intent.FLAG_ACTIVITY_REORDER_TO_FRONT
-            putExtra("incoming_call", true)
-        }
-        startActivity(intent)
-        android.util.Log.i(TAG, "Activity launched over lock screen")
     }
 
     private fun startVibration() {
