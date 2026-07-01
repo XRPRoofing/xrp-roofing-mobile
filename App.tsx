@@ -14,6 +14,7 @@ import {
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { WebView } from 'react-native-webview';
 import { CRM_URL, SUPABASE_URL, SUPABASE_ANON_KEY } from './src/config/constants';
+import { voiceHtml } from './src/voiceHtml';
 
 type Screen = 'loading' | 'login' | 'home' | 'incoming' | 'active';
 
@@ -201,7 +202,7 @@ export default function App() {
   const voiceWebView = session ? (
     <WebView
       ref={webViewRef}
-      source={{ uri: 'file:///android_asset/voice.html' }}
+      source={{ html: voiceHtml, baseUrl: 'https://sdk.twilio.com' }}
       onMessage={handleWebViewMessage}
       javaScriptEnabled={true}
       domStorageEnabled={true}

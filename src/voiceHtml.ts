@@ -1,0 +1,166 @@
+export const voiceHtml = `
+<!DOCTYPE html>
+<html>
+<head>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+</head>
+<body>
+<script>
+  var device = null;
+  var currentConnection = null;
+  var sdkLoaded = false;
+
+  function sendToRN(type, data) {
+    window.ReactNativeWebView.postMessage(JSON.stringify({ type: type, data: data }));
+  }
+
+  function loadTwilioSDK() {
+    var script = document.createElement('script');
+    script.src = 'https://sdk.twilio.com/js/client/releases/1.14.3/twilio.min.js';
+    script.onload = function() {
+      sdkLoaded = true;
+      sendToRN('status', { state: 'loaded', message: 'Voice bridge ready' });
+    };
+    script.onerror = function() {
+      sendToRN('status', { state: 'error', message: 'Failed to load Twilio SDK script' });
+    };
+    document.head.appendChild(script);
+  }
+
+  function setupDevice(token) {
+    if (typeof Twilio === 'undefined') {
+      sendToRN('status', { state: 'error', message: 'Twilio SDK not loaded yet, retrying...' });
+      setTimeout(function() { setupDevice(token); }, 2000);
+      return;
+    }
+    try {
+      device = new Twilio.Device(token, {
+        codecPreferences: ['opus', 'pcmu'],
+        enableRingingState: true,
+      });
+
+      device.on('ready', function() {
+        sendToRN('status', { state: 'ready', message: 'Ready to receive calls' });
+      });
+
+      device.on('error', function(error) {
+        sendToRN('status', { state: 'error', message: 'Twilio error: ' + error.message });
+      });
+
+      device.on('incoming', function(connection) {
+        currentConnection = connection;
+        var from = connection.parameters.From || 'Unknown';
+        sendToRN('incoming', { from: from, callSid: connection.parameters.CallSid });
+
+        connection.on('accept', function() {
+          sendToRN('callState', { state: 'connected' });
+        });
+
+        connection.on('disconnect', function() {
+          currentConnection = null;
+          sendToRN('callState', { state: 'disconnected' });
+        });
+
+        connection.on('cancel', function() {
+          currentConnection = null;
+          sendToRN('callState', { state: 'cancelled' });
+        });
+      });
+
+      device.on('disconnect', function() {
+        currentConnection = null;
+        sendToRN('callState', { state: 'disconnected' });
+      });
+
+      sendToRN('status', { state: 'connecting', message: 'Registering with Twilio...' });
+    } catch (e) {
+      sendToRN('status', { state: 'error', message: 'Setup failed: ' + e.message });
+    }
+  }
+
+  function acceptCall() {
+    if (currentConnection) {
+      currentConnection.accept();
+    }
+  }
+
+  function rejectCall() {
+    if (currentConnection) {
+      currentConnection.reject();
+      currentConnection = null;
+    }
+  }
+
+  function hangupCall() {
+    if (currentConnection) {
+      currentConnection.disconnect();
+      currentConnection = null;
+    }
+    if (device) {
+      device.disconnectAll();
+    }
+  }
+
+  function toggleMute(muted) {
+    if (currentConnection) {
+      currentConnection.mute(muted);
+    }
+  }
+
+  // Listen for commands from React Native
+  document.addEventListener('message', function(event) {
+    try {
+      var msg = JSON.parse(event.data);
+      switch (msg.command) {
+        case 'setup':
+          setupDevice(msg.token);
+          break;
+        case 'accept':
+          acceptCall();
+          break;
+        case 'reject':
+          rejectCall();
+          break;
+        case 'hangup':
+          hangupCall();
+          break;
+        case 'mute':
+          toggleMute(msg.muted);
+          break;
+      }
+    } catch (e) {
+      sendToRN('status', { state: 'error', message: 'Command error: ' + e.message });
+    }
+  });
+
+  window.addEventListener('message', function(event) {
+    try {
+      var msg = JSON.parse(event.data);
+      switch (msg.command) {
+        case 'setup':
+          setupDevice(msg.token);
+          break;
+        case 'accept':
+          acceptCall();
+          break;
+        case 'reject':
+          rejectCall();
+          break;
+        case 'hangup':
+          hangupCall();
+          break;
+        case 'mute':
+          toggleMute(msg.muted);
+          break;
+      }
+    } catch (e) {
+      // ignore
+    }
+  });
+
+  // Load Twilio SDK dynamically
+  loadTwilioSDK();
+</script>
+</body>
+</html>
+`;
