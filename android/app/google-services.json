@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "789077284630",
+    "project_id": "xrproofing-phone",
+    "storage_bucket": "xrproofing-phone.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:789077284630:android:1fff264c68316b6b7a6237",
+        "android_client_info": {
+          "package_name": "com.xrproofing.crm"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCyqdAs98J2JY446tp3Ho07wBilnKNmYF0"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
