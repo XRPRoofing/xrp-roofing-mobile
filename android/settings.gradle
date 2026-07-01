@@ -2,3 +2,7 @@ rootProject.name = 'XRPRoofingMobile'
 apply from: file("../node_modules/@react-native-community/cli-platform-android/native_modules.gradle"); applyNativeModulesSettingsGradle(settings)
 include ':app'
 includeBuild('../node_modules/@react-native/gradle-plugin')
+
+// Manually include Twilio Voice SDK (auto-linking disabled for controlled initialization)
+include ':twilio_voice-react-native-sdk'
+project(':twilio_voice-react-native-sdk').projectDir = new File(rootProject.projectDir, '../node_modules/@twilio/voice-react-native-sdk/android')
