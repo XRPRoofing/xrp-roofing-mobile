@@ -67,6 +67,8 @@ export default function App() {
       if (!response.ok) return null;
       const data = await response.json();
       await AsyncStorage.setItem('supabase_session', JSON.stringify(data));
+      // Update native service with new token
+      try { NativeModules.CallServiceModule?.updateToken(data.access_token); } catch (e) {}
       return data;
     } catch {
       return null;
@@ -144,9 +146,9 @@ export default function App() {
           return;
         }
       }
-      // Small delay to ensure everything is stable
+      // Small delay to ensure everything is stable, pass access_token for native polling
       setTimeout(() => {
-        try { NativeModules.CallServiceModule?.startService(); } catch (e) {}
+        try { NativeModules.CallServiceModule?.startService(session?.access_token || null); } catch (e) {}
       }, 1000);
     } catch (e) {
       // Silently fail — foreground service is non-critical for basic functionality

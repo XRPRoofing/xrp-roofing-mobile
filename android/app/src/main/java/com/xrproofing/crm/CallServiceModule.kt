@@ -13,8 +13,15 @@ class CallServiceModule(reactContext: ReactApplicationContext) : ReactContextBas
     override fun getName(): String = "CallServiceModule"
 
     @ReactMethod
-    fun startService() {
+    fun startService(accessToken: String?) {
         val context = reactApplicationContext
+        // Store token in SharedPreferences for the service to use
+        if (accessToken != null) {
+            context.getSharedPreferences("xrp_prefs", Context.MODE_PRIVATE)
+                .edit()
+                .putString("access_token", accessToken)
+                .apply()
+        }
         CallService.start(context)
         requestBatteryOptimizationExemption(context)
     }
@@ -23,6 +30,16 @@ class CallServiceModule(reactContext: ReactApplicationContext) : ReactContextBas
     fun stopService() {
         val context = reactApplicationContext
         CallService.stop(context)
+    }
+
+    @ReactMethod
+    fun updateToken(accessToken: String?) {
+        if (accessToken != null) {
+            reactApplicationContext.getSharedPreferences("xrp_prefs", Context.MODE_PRIVATE)
+                .edit()
+                .putString("access_token", accessToken)
+                .apply()
+        }
     }
 
     private fun requestBatteryOptimizationExemption(context: Context) {
