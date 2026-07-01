@@ -7,7 +7,9 @@ import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
 import android.content.Intent
-import android.media.Ringtone
+import android.media.AudioAttributes
+import android.media.AudioManager
+import android.media.MediaPlayer
 import android.media.RingtoneManager
 import android.os.Build
 import android.os.Handler
@@ -30,15 +32,15 @@ class CallService : Service() {
     private var wakeLock: PowerManager.WakeLock? = null
     private var lastSeenEventId: String? = null
     private var isRinging = false
-    private var ringtone: Ringtone? = null
+    private var mediaPlayer: MediaPlayer? = null
     private val mainHandler = Handler(Looper.getMainLooper())
     private var pollThread: Thread? = null
     @Volatile private var running = false
     private var pollCount = 0
 
     companion object {
-        const val CHANNEL_ID = "xrp_call_service"
-        const val RING_CHANNEL_ID = "xrp_incoming_call"
+        const val CHANNEL_ID = "xrp_call_service_v2"
+        const val RING_CHANNEL_ID = "xrp_incoming_call_v2"
         const val NOTIFICATION_ID = 1001
         const val RING_NOTIFICATION_ID = 1002
         const val SUPABASE_URL = "https://lcchocuoeettbryfwlwq.supabase.co"
@@ -79,9 +81,7 @@ class CallService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         try {
             startForeground(NOTIFICATION_ID, buildServiceNotification("Starting..."))
-            android.util.Log.i(TAG, "Service started, acquiring wake lock")
 
-            // Keep CPU awake
             try {
                 val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
                 wakeLock = pm.newWakeLock(
@@ -92,7 +92,6 @@ class CallService : Service() {
                 android.util.Log.e(TAG, "Wake lock failed: ${e.message}")
             }
 
-            // Start polling
             startPolling()
         } catch (e: Throwable) {
             android.util.Log.e(TAG, "startForeground failed: ${e.message}")
@@ -122,14 +121,13 @@ class CallService : Service() {
                 try {
                     checkForIncomingCalls()
                     pollCount++
-                    mainHandler.post { updateServiceNotification("Listening for calls (${pollCount})") }
+                    mainHandler.post { updateServiceNotification("Listening for calls ($pollCount)") }
                 } catch (e: Throwable) {
                     android.util.Log.e(TAG, "Poll error: ${e.message}")
-                    mainHandler.post { updateServiceNotification("Error: ${e.message?.take(40)}") }
+                    mainHandler.post { updateServiceNotification("Poll error: ${e.message?.take(30)}") }
                 }
                 try { Thread.sleep(3000) } catch (_: InterruptedException) { break }
             }
-            android.util.Log.i(TAG, "Poll thread stopped")
         }.apply {
             isDaemon = true
             name = "XRP-CallPoll"
@@ -167,10 +165,13 @@ class CallService : Service() {
                     val eventId = event.getString("id")
 
                     if (eventId != lastSeenEventId) {
-                        android.util.Log.i(TAG, "New ringing event: $eventId")
+                        android.util.Log.i(TAG, "NEW CALL: $eventId")
                         lastSeenEventId = eventId
                         if (!isRinging) {
-                            mainHandler.post { triggerIncomingCall() }
+                            mainHandler.post {
+                                updateServiceNotification("RINGING! Call detected")
+                                triggerIncomingCall()
+                            }
                         }
                     }
                 } else {
@@ -179,7 +180,7 @@ class CallService : Service() {
                     }
                 }
             } else {
-                android.util.Log.w(TAG, "API response: $responseCode")
+                android.util.Log.w(TAG, "API: $responseCode")
             }
         } finally {
             conn.disconnect()
@@ -187,30 +188,34 @@ class CallService : Service() {
     }
 
     private fun triggerIncomingCall() {
-        android.util.Log.i(TAG, "=== INCOMING CALL DETECTED ===")
+        android.util.Log.i(TAG, "=== TRIGGERING RING ===")
         isRinging = true
 
-        try { vibrate() } catch (e: Throwable) {
-            android.util.Log.e(TAG, "Vibrate failed: ${e.message}")
+        // 1. Vibrate aggressively
+        try { startVibration() } catch (e: Throwable) {
+            android.util.Log.e(TAG, "Vibrate: ${e.message}")
         }
 
-        try { playRingtone() } catch (e: Throwable) {
-            android.util.Log.e(TAG, "Ringtone failed: ${e.message}")
+        // 2. Play ringtone at max volume via MediaPlayer
+        try { startRingtone() } catch (e: Throwable) {
+            android.util.Log.e(TAG, "Ringtone: ${e.message}")
         }
 
+        // 3. Show full-screen notification with sound
         try { showIncomingCallNotification() } catch (e: Throwable) {
-            android.util.Log.e(TAG, "Notification failed: ${e.message}")
+            android.util.Log.e(TAG, "Notification: ${e.message}")
         }
 
+        // 4. Wake screen
         try { wakeScreen() } catch (e: Throwable) {
-            android.util.Log.e(TAG, "Wake screen failed: ${e.message}")
+            android.util.Log.e(TAG, "Wake: ${e.message}")
         }
 
         // Auto-stop after 30 seconds
         mainHandler.postDelayed({ stopRinging() }, 30000)
     }
 
-    private fun vibrate() {
+    private fun startVibration() {
         val pattern = longArrayOf(0, 1000, 500, 1000, 500, 1000, 500, 1000, 500, 1000)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             val vm = getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as VibratorManager
@@ -225,20 +230,38 @@ class CallService : Service() {
                 vibrator.vibrate(pattern, 0)
             }
         }
+        android.util.Log.i(TAG, "Vibration started")
     }
 
-    private fun playRingtone() {
-        val uri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_RINGTONE)
-        ringtone = RingtoneManager.getRingtone(applicationContext, uri)?.apply {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-                isLooping = true
-            }
-            play()
+    private fun startRingtone() {
+        // Set ringer volume to max
+        try {
+            val am = getSystemService(Context.AUDIO_SERVICE) as AudioManager
+            val maxVol = am.getStreamMaxVolume(AudioManager.STREAM_RING)
+            am.setStreamVolume(AudioManager.STREAM_RING, maxVol, 0)
+        } catch (e: Throwable) {
+            android.util.Log.w(TAG, "Volume set failed: ${e.message}")
         }
+
+        val ringtoneUri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_RINGTONE)
+        mediaPlayer = MediaPlayer().apply {
+            setAudioAttributes(
+                AudioAttributes.Builder()
+                    .setUsage(AudioAttributes.USAGE_NOTIFICATION_RINGTONE)
+                    .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                    .build()
+            )
+            setDataSource(applicationContext, ringtoneUri)
+            isLooping = true
+            prepare()
+            start()
+        }
+        android.util.Log.i(TAG, "Ringtone started")
     }
 
     private fun stopRinging() {
         isRinging = false
+        // Stop vibration
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                 (getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as VibratorManager).defaultVibrator.cancel()
@@ -247,8 +270,17 @@ class CallService : Service() {
                 (getSystemService(Context.VIBRATOR_SERVICE) as Vibrator).cancel()
             }
         } catch (_: Throwable) {}
-        try { ringtone?.stop(); ringtone = null } catch (_: Throwable) {}
-        try { (getSystemService(NotificationManager::class.java)).cancel(RING_NOTIFICATION_ID) } catch (_: Throwable) {}
+        // Stop ringtone
+        try {
+            mediaPlayer?.stop()
+            mediaPlayer?.release()
+            mediaPlayer = null
+        } catch (_: Throwable) {}
+        // Remove notification
+        try {
+            (getSystemService(NotificationManager::class.java)).cancel(RING_NOTIFICATION_ID)
+        } catch (_: Throwable) {}
+        android.util.Log.i(TAG, "Ringing stopped")
     }
 
     private fun wakeScreen() {
@@ -268,8 +300,10 @@ class CallService : Service() {
         val pi = PendingIntent.getActivity(this, 1, intent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
 
+        val ringtoneUri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_RINGTONE)
+
         val notification = NotificationCompat.Builder(this, RING_CHANNEL_ID)
-            .setContentTitle("Incoming Call")
+            .setContentTitle("📞 Incoming Call")
             .setContentText("XRP Roofing — Tap to answer")
             .setSmallIcon(android.R.drawable.ic_menu_call)
             .setPriority(NotificationCompat.PRIORITY_MAX)
@@ -279,9 +313,12 @@ class CallService : Service() {
             .setAutoCancel(true)
             .setOngoing(true)
             .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+            .setSound(ringtoneUri)
+            .setVibrate(longArrayOf(0, 1000, 500, 1000, 500, 1000))
             .build()
 
         (getSystemService(NotificationManager::class.java)).notify(RING_NOTIFICATION_ID, notification)
+        android.util.Log.i(TAG, "Incoming call notification shown")
     }
 
     private fun updateServiceNotification(text: String) {
@@ -295,6 +332,12 @@ class CallService : Service() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val nm = getSystemService(NotificationManager::class.java)
 
+            // Delete old channels from previous installs
+            try {
+                nm.deleteNotificationChannel("xrp_call_service")
+                nm.deleteNotificationChannel("xrp_incoming_call")
+            } catch (_: Throwable) {}
+
             nm.createNotificationChannel(NotificationChannel(
                 CHANNEL_ID, "Call Service", NotificationManager.IMPORTANCE_LOW
             ).apply {
@@ -302,12 +345,17 @@ class CallService : Service() {
                 setShowBadge(false)
             })
 
+            val ringtoneUri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_RINGTONE)
             nm.createNotificationChannel(NotificationChannel(
                 RING_CHANNEL_ID, "Incoming Calls", NotificationManager.IMPORTANCE_HIGH
             ).apply {
-                description = "Alerts for incoming calls"
+                description = "Alerts for incoming phone calls"
                 enableVibration(true)
-                vibrationPattern = longArrayOf(0, 1000, 500, 1000)
+                vibrationPattern = longArrayOf(0, 1000, 500, 1000, 500, 1000)
+                setSound(ringtoneUri, AudioAttributes.Builder()
+                    .setUsage(AudioAttributes.USAGE_NOTIFICATION_RINGTONE)
+                    .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                    .build())
                 lockscreenVisibility = Notification.VISIBILITY_PUBLIC
                 setBypassDnd(true)
             })
