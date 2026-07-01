@@ -19,94 +19,66 @@ const voiceLogic = `
 
   function setupDevice(token) {
     try {
-      // Check what's available on Twilio global
-      if (typeof Twilio === 'undefined') {
-        sendToRN('status', { state: 'error', message: 'Twilio global not found' });
+      if (typeof Twilio === 'undefined' || !Twilio.Device) {
+        sendToRN('status', { state: 'error', message: 'Twilio SDK not available' });
         return;
       }
 
-      var DeviceClass = Twilio.Device;
-      if (!DeviceClass) {
-        sendToRN('status', { state: 'error', message: 'Twilio.Device not found' });
-        return;
-      }
-
-      // Voice SDK 2.x constructor
-      device = new DeviceClass(token, {
-        logLevel: 1,
-        allowIncomingWhileBusy: true,
+      // Twilio Client SDK 1.x API
+      device = new Twilio.Device(token, {
+        codecPreferences: ['opus', 'pcmu'],
+        enableRingingState: true,
       });
 
-      device.on('registered', function() {
+      device.on('ready', function() {
         sendToRN('status', { state: 'ready', message: 'Ready to receive calls' });
       });
 
-      device.on('registering', function() {
-        sendToRN('status', { state: 'connecting', message: 'Registering...' });
+      device.on('error', function(error) {
+        var msg = error.message || error.code || String(error);
+        sendToRN('status', { state: 'error', message: 'Twilio: ' + msg });
       });
 
-      device.on('unregistered', function() {
-        sendToRN('status', { state: 'error', message: 'Unregistered from Twilio' });
-      });
+      device.on('incoming', function(connection) {
+        currentConnection = connection;
+        var from = connection.parameters.From || 'Unknown';
+        sendToRN('incoming', { from: from, callSid: connection.parameters.CallSid });
 
-      device.on('error', function(twilioError) {
-        var msg = 'Unknown error';
-        if (twilioError && twilioError.message) {
-          msg = twilioError.message;
-        } else if (twilioError && twilioError.originalError) {
-          msg = twilioError.originalError.message || String(twilioError.originalError);
-        } else if (typeof twilioError === 'string') {
-          msg = twilioError;
-        }
-        sendToRN('status', { state: 'error', message: 'Error: ' + msg });
-      });
-
-      device.on('incoming', function(call) {
-        currentConnection = call;
-        var from = call.parameters ? (call.parameters.From || 'Unknown') : 'Unknown';
-        sendToRN('incoming', { from: from });
-
-        call.on('accept', function() {
+        connection.on('accept', function() {
           sendToRN('callState', { state: 'connected' });
         });
 
-        call.on('disconnect', function() {
+        connection.on('disconnect', function() {
           currentConnection = null;
           sendToRN('callState', { state: 'disconnected' });
         });
 
-        call.on('cancel', function() {
+        connection.on('cancel', function() {
           currentConnection = null;
           sendToRN('callState', { state: 'cancelled' });
         });
-
-        call.on('reject', function() {
-          currentConnection = null;
-          sendToRN('callState', { state: 'disconnected' });
-        });
       });
 
-      // Register for incoming calls - returns a Promise in v2.x
-      sendToRN('status', { state: 'connecting', message: 'Registering with Twilio...' });
-      
-      var registerPromise = device.register();
-      if (registerPromise && typeof registerPromise.then === 'function') {
-        registerPromise.then(function() {
-          // registered event will fire
-        }).catch(function(err) {
-          sendToRN('status', { state: 'error', message: 'Register failed: ' + (err.message || err) });
-        });
-      }
+      device.on('disconnect', function() {
+        currentConnection = null;
+        sendToRN('callState', { state: 'disconnected' });
+      });
 
-      // Timeout: if not registered after 15 seconds, report
+      device.on('offline', function() {
+        sendToRN('status', { state: 'error', message: 'Device went offline' });
+      });
+
+      sendToRN('status', { state: 'connecting', message: 'Registering with Twilio...' });
+
+      // Timeout: if not ready after 20 seconds, report
       setTimeout(function() {
-        if (device && device.state !== 'registered') {
-          sendToRN('status', { state: 'error', message: 'Registration timeout - state: ' + (device.state || 'unknown') });
+        if (device && device.status() !== 'ready') {
+          sendToRN('status', { state: 'error', message: 'Registration timeout - status: ' + (device.status ? device.status() : 'unknown') });
         }
-      }, 15000);
+      }, 20000);
 
     } catch (e) {
-      sendToRN('status', { state: 'error', message: 'Setup error: ' + e.message + ' | stack: ' + (e.stack || '').substring(0, 200) });
+      sendToRN('status', { state: 'error', message: 'Setup error: ' + e.message });
     }
   }
 
@@ -150,6 +122,6 @@ const voiceLogic = `
 const html = `<!DOCTYPE html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"></head><body><script>${sdk}</script><script>${voiceLogic}</script></body></html>`;
 
 // Write as a TS module
-const tsContent = `// Auto-generated - do not edit manually\n// Contains embedded Twilio Voice SDK + bridge logic\nexport const voiceHtml = ${JSON.stringify(html)};\n`;
+const tsContent = `// Auto-generated - do not edit manually\n// Contains embedded Twilio Client SDK 1.14.0 + bridge logic\nexport const voiceHtml = ${JSON.stringify(html)};\n`;
 fs.writeFileSync('./src/voiceHtml.ts', tsContent);
 console.log('voiceHtml.ts generated:', (tsContent.length / 1024).toFixed(0) + 'KB');
