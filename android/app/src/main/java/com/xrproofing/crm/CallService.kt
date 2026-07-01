@@ -9,27 +9,33 @@ import android.content.Context
 import android.content.Intent
 import android.os.Build
 import android.os.IBinder
-import android.os.PowerManager
 import androidx.core.app.NotificationCompat
 
 class CallService : Service() {
-    private var wakeLock: PowerManager.WakeLock? = null
 
     companion object {
         const val CHANNEL_ID = "xrp_call_service"
         const val NOTIFICATION_ID = 1001
 
         fun start(context: Context) {
-            val intent = Intent(context, CallService::class.java)
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                context.startForegroundService(intent)
-            } else {
-                context.startService(intent)
+            try {
+                val intent = Intent(context, CallService::class.java)
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    context.startForegroundService(intent)
+                } else {
+                    context.startService(intent)
+                }
+            } catch (e: Exception) {
+                // Silently fail — don't crash the app
             }
         }
 
         fun stop(context: Context) {
-            context.stopService(Intent(context, CallService::class.java))
+            try {
+                context.stopService(Intent(context, CallService::class.java))
+            } catch (e: Exception) {
+                // Silently fail
+            }
         }
     }
 
@@ -41,22 +47,10 @@ class CallService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val notification = buildNotification()
         startForeground(NOTIFICATION_ID, notification)
-
-        // Acquire partial wake lock to keep network alive
-        val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
-        wakeLock = pm.newWakeLock(
-            PowerManager.PARTIAL_WAKE_LOCK,
-            "XRPRoofing::CallServiceLock"
-        ).apply {
-            acquire()
-        }
-
         return START_STICKY
     }
 
     override fun onDestroy() {
-        wakeLock?.release()
-        wakeLock = null
         super.onDestroy()
     }
 

@@ -13,6 +13,7 @@ import {
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { WebView } from 'react-native-webview';
+import { NativeModules } from 'react-native';
 import { CRM_URL, SUPABASE_URL, SUPABASE_ANON_KEY } from './src/config/constants';
 import { voiceHtml } from './src/voiceHtml';
 
@@ -103,6 +104,7 @@ export default function App() {
 
   async function handleLogout() {
     sendToWebView({ command: 'hangup' });
+    try { NativeModules.CallServiceModule?.stopService(); } catch (e) {}
     await AsyncStorage.removeItem('supabase_session');
     setSession(null);
     setVoiceStatus('Initializing...');
@@ -148,7 +150,10 @@ export default function App() {
             setTimeout(() => registerVoice(), 500);
           }
           if (msg.data.state === 'ready') {
-            // Voice registered successfully
+            // Start foreground service after 3s delay to keep connection alive
+            setTimeout(() => {
+              try { NativeModules.CallServiceModule?.startService(); } catch (e) {}
+            }, 3000);
           }
           break;
         case 'incoming':
