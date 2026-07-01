@@ -1,8 +1,9 @@
 import { useState, useEffect, useCallback, useRef } from "react";
-import { Voice } from "@twilio/voice-react-native-sdk";
 import type { Call, CallInvite } from "@twilio/voice-react-native-sdk";
 import {
   getVoice,
+  getVoiceEvents,
+  getCallEvents,
   registerForCalls,
   acceptCall,
   rejectCall,
@@ -40,29 +41,41 @@ export function useVoice() {
   }, []);
 
   useEffect(() => {
-    const voice = getVoice();
+    try {
+      const voice = getVoice();
+      if (!voice) {
+        setError("Voice SDK not available on this device");
+        return;
+      }
 
-    const handleCallInvite = (invite: CallInvite) => {
-      console.log("[useVoice] Incoming call from:", invite.from);
-      setCallInvite(invite);
-      setCallerName(invite.from || "Unknown");
-      setCallState("ringing");
-    };
+      const events = getVoiceEvents();
+      if (!events.CallInvite) return;
 
-    const handleCancelledCallInvite = () => {
-      console.log("[useVoice] Call invite cancelled");
-      setCallInvite(null);
-      setCallState("idle");
-      setCallerName("");
-    };
+      const handleCallInvite = (invite: CallInvite) => {
+        console.log("[useVoice] Incoming call from:", invite.from);
+        setCallInvite(invite);
+        setCallerName(invite.from || "Unknown");
+        setCallState("ringing");
+      };
 
-    voice.on(Voice.Event.CallInvite, handleCallInvite);
-    voice.on(Voice.Event.CancelledCallInvite, handleCancelledCallInvite);
+      const handleCancelledCallInvite = () => {
+        console.log("[useVoice] Call invite cancelled");
+        setCallInvite(null);
+        setCallState("idle");
+        setCallerName("");
+      };
 
-    return () => {
-      voice.removeListener(Voice.Event.CallInvite, handleCallInvite);
-      voice.removeListener(Voice.Event.CancelledCallInvite, handleCancelledCallInvite);
-    };
+      voice.on(events.CallInvite, handleCallInvite);
+      voice.on(events.CancelledCallInvite, handleCancelledCallInvite);
+
+      return () => {
+        voice.removeListener(events.CallInvite, handleCallInvite);
+        voice.removeListener(events.CancelledCallInvite, handleCancelledCallInvite);
+      };
+    } catch (err) {
+      console.error("[useVoice] Setup error:", err);
+      setError("Failed to initialize voice");
+    }
   }, []);
 
   const answer = useCallback(async () => {
@@ -73,13 +86,16 @@ export function useVoice() {
       setCallState("connected");
       setCallInvite(null);
 
-      call.on(Call.Event.Disconnected, () => {
-        setCallState("idle");
-        setActiveCall(null);
-        setCurrentCall(null);
-        setCallerName("");
-        setIsMuted(false);
-      });
+      const callEvents = getCallEvents();
+      if (callEvents.Disconnected) {
+        call.on(callEvents.Disconnected, () => {
+          setCallState("idle");
+          setActiveCall(null);
+          setCurrentCall(null);
+          setCallerName("");
+          setIsMuted(false);
+        });
+      }
     } catch (err) {
       console.error("[useVoice] Accept failed:", err);
       setCallState("idle");

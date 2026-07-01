@@ -117,4 +117,8 @@ dependencies {
     } else {
         implementation jscFlavor
     }
+
+    // Firebase Cloud Messaging (required by Twilio Voice SDK)
+    implementation(platform("com.google.firebase:firebase-bom:33.1.0"))
+    implementation("com.google.firebase:firebase-messaging")
 }
