@@ -54,11 +54,40 @@ export default function App() {
     };
   }, [screen]);
 
+  async function refreshSession(refreshToken: string) {
+    try {
+      const response = await fetch(`${SUPABASE_URL}/auth/v1/token?grant_type=refresh_token`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'apikey': SUPABASE_ANON_KEY,
+        },
+        body: JSON.stringify({ refresh_token: refreshToken }),
+      });
+      if (!response.ok) return null;
+      const data = await response.json();
+      await AsyncStorage.setItem('supabase_session', JSON.stringify(data));
+      return data;
+    } catch {
+      return null;
+    }
+  }
+
   async function checkExistingSession() {
     try {
       const stored = await AsyncStorage.getItem('supabase_session');
       if (stored) {
         const parsed = JSON.parse(stored);
+        // Always refresh the token to ensure it's valid
+        if (parsed.refresh_token) {
+          const refreshed = await refreshSession(parsed.refresh_token);
+          if (refreshed) {
+            setSession(refreshed);
+            setScreen('home');
+            return;
+          }
+        }
+        // If refresh failed, try using existing token
         setSession(parsed);
         setScreen('home');
       } else {
@@ -141,14 +170,37 @@ export default function App() {
     if (!session?.access_token) return;
     setVoiceStatus('Fetching token...');
     try {
-      const tokenRes = await fetch(`${CRM_URL}/api/voice/token`, {
+      let accessToken = session.access_token;
+      let tokenRes = await fetch(`${CRM_URL}/api/voice/token`, {
         method: 'POST',
         headers: {
-          Authorization: `Bearer ${session.access_token}`,
+          Authorization: `Bearer ${accessToken}`,
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({ platform: 'android' }),
       });
+
+      // If 401, try refreshing the session first
+      if (tokenRes.status === 401 && session.refresh_token) {
+        setVoiceStatus('Refreshing session...');
+        const refreshed = await refreshSession(session.refresh_token);
+        if (refreshed) {
+          setSession(refreshed);
+          accessToken = refreshed.access_token;
+          tokenRes = await fetch(`${CRM_URL}/api/voice/token`, {
+            method: 'POST',
+            headers: {
+              Authorization: `Bearer ${accessToken}`,
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ platform: 'android' }),
+          });
+        } else {
+          setVoiceStatus('Session expired — please log out and log in again');
+          return;
+        }
+      }
+
       if (!tokenRes.ok) {
         setVoiceStatus(`Token error: ${tokenRes.status}`);
         return;
