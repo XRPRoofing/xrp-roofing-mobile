@@ -1,5 +1,6 @@
 // XRP Roofing CRM API base URL
 export const CRM_API_URL = "https://www.xrproofing.app";
+export const CRM_URL = CRM_API_URL;
 
 // Supabase config (same public keys as CRM — not secrets)
 export const SUPABASE_URL = "https://lcchocuoeettbryfwlwq.supabase.co";
