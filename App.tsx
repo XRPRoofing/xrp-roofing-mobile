@@ -10,10 +10,11 @@ import {
   StatusBar,
   Vibration,
   Platform,
+  PermissionsAndroid,
+  NativeModules,
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { WebView } from 'react-native-webview';
-import { NativeModules } from 'react-native';
 import { CRM_URL, SUPABASE_URL, SUPABASE_ANON_KEY } from './src/config/constants';
 import { voiceHtml } from './src/voiceHtml';
 
@@ -102,6 +103,27 @@ export default function App() {
     }
   }
 
+  async function startBackgroundService() {
+    try {
+      // Request notification permission on Android 13+
+      if (Platform.OS === 'android' && Platform.Version >= 33) {
+        const granted = await PermissionsAndroid.request(
+          'android.permission.POST_NOTIFICATIONS' as any,
+        );
+        if (granted !== PermissionsAndroid.RESULTS.GRANTED) {
+          // Permission denied — skip service but don't crash
+          return;
+        }
+      }
+      // Small delay to ensure everything is stable
+      setTimeout(() => {
+        try { NativeModules.CallServiceModule?.startService(); } catch (e) {}
+      }, 1000);
+    } catch (e) {
+      // Silently fail — foreground service is non-critical for basic functionality
+    }
+  }
+
   async function handleLogout() {
     sendToWebView({ command: 'hangup' });
     try { NativeModules.CallServiceModule?.stopService(); } catch (e) {}
@@ -150,10 +172,8 @@ export default function App() {
             setTimeout(() => registerVoice(), 500);
           }
           if (msg.data.state === 'ready') {
-            // Start foreground service after 3s delay to keep connection alive
-            setTimeout(() => {
-              try { NativeModules.CallServiceModule?.startService(); } catch (e) {}
-            }, 3000);
+            // Start foreground service to keep connection alive when locked
+            startBackgroundService();
           }
           break;
         case 'incoming':

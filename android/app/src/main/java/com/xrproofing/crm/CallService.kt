@@ -26,7 +26,7 @@ class CallService : Service() {
                     context.startService(intent)
                 }
             } catch (e: Exception) {
-                // Silently fail — don't crash the app
+                android.util.Log.e("CallService", "Failed to start service: ${e.message}")
             }
         }
 
@@ -34,19 +34,28 @@ class CallService : Service() {
             try {
                 context.stopService(Intent(context, CallService::class.java))
             } catch (e: Exception) {
-                // Silently fail
+                android.util.Log.e("CallService", "Failed to stop service: ${e.message}")
             }
         }
     }
 
     override fun onCreate() {
         super.onCreate()
-        createNotificationChannel()
+        try {
+            createNotificationChannel()
+        } catch (e: Exception) {
+            android.util.Log.e("CallService", "onCreate error: ${e.message}")
+        }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        val notification = buildNotification()
-        startForeground(NOTIFICATION_ID, notification)
+        try {
+            val notification = buildNotification()
+            startForeground(NOTIFICATION_ID, notification)
+        } catch (e: Exception) {
+            android.util.Log.e("CallService", "startForeground failed: ${e.message}")
+            stopSelf()
+        }
         return START_STICKY
     }
 
