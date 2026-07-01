@@ -141,10 +141,10 @@ class CallService : Service() {
         sdf.timeZone = TimeZone.getTimeZone("UTC")
         val sixtySecondsAgo = sdf.format(Date(System.currentTimeMillis() - 60000))
 
-        // Poll for ivr-routed events — these fire when customer selects agent in IVR
+        // Poll for both ringing AND ivr-routed events
         val urlStr = "$SUPABASE_URL/rest/v1/conversation_events" +
             "?select=id,status,created_at" +
-            "&status=eq.ivr-routed" +
+            "&status=in.(ringing,ivr-routed)" +
             "&created_at=gte.$sixtySecondsAgo" +
             "&order=created_at.desc" +
             "&limit=1"
